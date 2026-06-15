@@ -86,7 +86,7 @@
   }
 
   // Extension version from manifest.json
-  const extensionVersion = "3.6.1";
+  const extensionVersion = "3.7.0";
   console.log(`Extension API Naturalisation - Version: ${extensionVersion}`);
 
   // Fonction de décryptage dédiée à Kamal : Round 2
@@ -471,6 +471,7 @@
 
   function removeStepperIfPresent() {
     document.getElementById("anf-extension-stepper-root")?.remove();
+    document.getElementById("anf-extension-tracking-panel")?.remove();
   }
 
   async function fetchApiInfos() {
@@ -1731,6 +1732,339 @@
     return true;
   }
 
+  // --- Suivi : historique des changements de statut + résumé copiable -------
+  // Stocké dans le localStorage de l'origine ANEF : aucune donnée ne quitte le
+  // navigateur. Tout est défensif (try/catch silencieux) pour ne jamais
+  // perturber le rendu du stepper si le stockage est indisponible.
+  const HISTORY_STORAGE_PREFIX = "anfExtensionStatusHistory";
+
+  function getHistoryStorageKey(apiInfos) {
+    const id = apiInfos && apiInfos.idDossier ? String(apiInfos.idDossier) : "default";
+    return `${HISTORY_STORAGE_PREFIX}:${id}`;
+  }
+
+  function loadStatusHistory(apiInfos) {
+    try {
+      const raw = window.localStorage.getItem(getHistoryStorageKey(apiInfos));
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function saveStatusHistory(apiInfos, history) {
+    try {
+      window.localStorage.setItem(
+        getHistoryStorageKey(apiInfos),
+        JSON.stringify(history.slice(-100))
+      );
+    } catch (error) {
+      /* quota plein ou stockage bloqué : on ignore */
+    }
+  }
+
+  function recordStatusHistory(apiInfos) {
+    const history = loadStatusHistory(apiInfos);
+    if (!apiInfos || !apiInfos.statutCode) return history;
+
+    const statutCode = String(apiInfos.statutCode).toLowerCase();
+    const last = history[history.length - 1];
+    if (last && String(last.statutCode).toLowerCase() === statutCode) {
+      return history;
+    }
+
+    history.push({
+      statutCode,
+      statutDescription:
+        apiInfos.statutDescription || getStatusDescription(statutCode),
+      dateStatut: apiInfos.dateStatut || null,
+      recordedAt: new Date().toISOString(),
+    });
+    saveStatusHistory(apiInfos, history);
+    return history;
+  }
+
+  function buildDossierSummaryText(apiInfos, history) {
+    const lines = [];
+    lines.push("Suivi de ma demande de naturalisation");
+    lines.push("-------------------------------------");
+    if (apiInfos.statutDescription) {
+      lines.push(`Statut actuel : ${apiInfos.statutDescription}`);
+    }
+    if (apiInfos.dateStatut) {
+      const rel = apiInfos.dateStatutRelative
+        ? ` (${apiInfos.dateStatutRelative})`
+        : "";
+      lines.push(`Depuis le : ${formatDate(apiInfos.dateStatut)}${rel}`);
+    }
+    if (apiInfos.demandeDate) {
+      lines.push(`Demande déposée le : ${formatDate(apiInfos.demandeDate)}`);
+    }
+    if (apiInfos.recepisseCreated) {
+      lines.push(
+        `Récépissé de complétude : ${formatDate(apiInfos.recepisseCreated)}`
+      );
+    }
+    if (apiInfos.assimilationDate) {
+      lines.push(
+        `Entretien d'assimilation : ${formatDate(apiInfos.assimilationDate)}`
+      );
+    }
+    if (apiInfos.decretId) {
+      lines.push(`N° de décret : ${apiInfos.decretId}`);
+    }
+
+    if (Array.isArray(history) && history.length > 1) {
+      lines.push("");
+      lines.push("Historique des changements :");
+      history.slice(-12).forEach((entry) => {
+        const when = entry.dateStatut
+          ? formatDate(entry.dateStatut)
+          : formatDate(entry.recordedAt);
+        lines.push(`- ${when} : ${entry.statutDescription || entry.statutCode}`);
+      });
+    }
+
+    lines.push("");
+    lines.push(`Généré par l'extension Statut Naturalisation v${extensionVersion}`);
+    return lines.join("\n");
+  }
+
+  async function copyTextToClipboard(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (error) {
+      /* on tente le repli ci-dessous */
+    }
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function injectTrackingPanelCss() {
+    const styleId = "anf-tracking-panel-style";
+    if (document.getElementById(styleId)) return;
+    const styleEl = document.createElement("style");
+    styleEl.id = styleId;
+    styleEl.textContent = `
+      #anf-extension-tracking-panel,
+      #anf-extension-tracking-panel * { box-sizing: border-box; }
+      #anf-extension-tracking-panel {
+        --anf-bleu: #000091;
+        --anf-ink: #161616;
+        --anf-muted: #666;
+        --anf-line: #e5e5e5;
+        font-family: inherit;
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 8px 14px 14px;
+        background: #f8f8fc;
+        border-bottom: 1px solid var(--anf-line);
+      }
+      #anf-extension-tracking-panel .anf-suivi-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      #anf-extension-tracking-panel .anf-suivi-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--anf-ink);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #anf-extension-tracking-panel .anf-suivi-actions {
+        display: flex;
+        gap: 8px;
+      }
+      #anf-extension-tracking-panel button.anf-suivi-btn {
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid #c9c9e0;
+        background: #fff;
+        color: var(--anf-bleu);
+        border-radius: 999px;
+        padding: 4px 12px;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      #anf-extension-tracking-panel button.anf-suivi-btn:hover {
+        background: #eef0ff;
+        border-color: var(--anf-bleu);
+      }
+      #anf-extension-tracking-panel .anf-suivi-timeline {
+        list-style: none !important;
+        margin: 10px 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item {
+        position: relative;
+        padding: 0 0 12px 18px;
+        border-left: 2px solid #d9d9ec;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item:last-child {
+        padding-bottom: 0;
+        border-left-color: transparent;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item::before {
+        content: "";
+        position: absolute;
+        left: -6px;
+        top: 2px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #c4c4dd;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item.is-latest::before {
+        background: var(--anf-bleu);
+        box-shadow: 0 0 0 3px rgba(0, 0, 145, 0.15);
+      }
+      #anf-extension-tracking-panel .anf-suivi-item .anf-suivi-when {
+        font-size: 10px;
+        color: var(--anf-muted);
+      }
+      #anf-extension-tracking-panel .anf-suivi-item .anf-suivi-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--anf-ink);
+      }
+      #anf-extension-tracking-panel .anf-suivi-item .anf-suivi-gap {
+        font-size: 10px;
+        color: var(--anf-muted);
+        font-style: italic;
+      }
+      #anf-extension-tracking-panel .anf-suivi-empty {
+        margin: 8px 0 0;
+        font-size: 11px;
+        color: var(--anf-muted);
+      }
+      #anf-extension-tracking-panel[data-collapsed="true"] .anf-suivi-body {
+        display: none;
+      }
+    `;
+    document.head.appendChild(styleEl);
+  }
+
+  function renderTrackingPanel(apiInfos) {
+    try {
+      const root = document.getElementById("anf-extension-stepper-root");
+      if (!root || !hasNaturalisationData(apiInfos)) return;
+
+      const history = recordStatusHistory(apiInfos);
+      injectTrackingPanelCss();
+
+      let panel = document.getElementById("anf-extension-tracking-panel");
+      if (!panel) {
+        panel = document.createElement("section");
+        panel.id = "anf-extension-tracking-panel";
+        root.insertAdjacentElement("afterend", panel);
+      }
+
+      const collapsed = panel.getAttribute("data-collapsed") === "true";
+      panel.setAttribute("data-collapsed", collapsed ? "true" : "false");
+
+      let itemsHtml = "";
+      if (history.length <= 1) {
+        itemsHtml = `<p class="anf-suivi-empty">L'historique se construit automatiquement : chaque nouveau statut détecté lors de vos visites sera enregistré ici.</p>`;
+      } else {
+        itemsHtml = '<ul class="anf-suivi-timeline">';
+        history.forEach((entry, index) => {
+          const isLatest = index === history.length - 1;
+          const when = entry.dateStatut
+            ? formatDate(entry.dateStatut)
+            : formatDate(entry.recordedAt);
+          const prev = index > 0 ? history[index - 1] : null;
+          let gapHtml = "";
+          if (prev) {
+            const from = parseAnchorDate(prev.dateStatut || prev.recordedAt);
+            const to = parseAnchorDate(entry.dateStatut || entry.recordedAt);
+            const gap = formatDurationBetween(from, to);
+            if (gap) gapHtml = `<div class="anf-suivi-gap">+ ${gap} depuis l'étape précédente</div>`;
+          }
+          const label = escapeHtml(entry.statutDescription || entry.statutCode);
+          itemsHtml += `
+            <li class="anf-suivi-item${isLatest ? " is-latest" : ""}">
+              <div class="anf-suivi-when">${escapeHtml(when)}</div>
+              <div class="anf-suivi-label">${label}</div>
+              ${gapHtml}
+            </li>`;
+        });
+        itemsHtml += "</ul>";
+      }
+
+      panel.innerHTML = `
+        <div class="anf-suivi-head">
+          <h3 class="anf-suivi-title">Suivi &amp; historique</h3>
+          <div class="anf-suivi-actions">
+            <button type="button" class="anf-suivi-btn" data-action="copy">Copier le résumé</button>
+            <button type="button" class="anf-suivi-btn" data-action="toggle">${collapsed ? "Afficher" : "Masquer"}</button>
+          </div>
+        </div>
+        <div class="anf-suivi-body">${itemsHtml}</div>
+      `;
+
+      const copyBtn = panel.querySelector('[data-action="copy"]');
+      if (copyBtn) {
+        copyBtn.addEventListener("click", async () => {
+          const summary = buildDossierSummaryText(apiInfos, history);
+          const ok = await copyTextToClipboard(summary);
+          const previous = copyBtn.textContent;
+          copyBtn.textContent = ok ? "Copié ✓" : "Échec de la copie";
+          setTimeout(() => {
+            copyBtn.textContent = previous;
+          }, 1800);
+        });
+      }
+
+      const toggleBtn = panel.querySelector('[data-action="toggle"]');
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", () => {
+          const isCollapsed = panel.getAttribute("data-collapsed") === "true";
+          panel.setAttribute("data-collapsed", isCollapsed ? "false" : "true");
+          toggleBtn.textContent = isCollapsed ? "Masquer" : "Afficher";
+        });
+      }
+    } catch (error) {
+      console.log(
+        "Warning: Extension API Naturalisation — panneau de suivi ignoré:",
+        error
+      );
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function waitForAnefHeader(timeoutMs = 5000) {
     return new Promise((resolve) => {
       if (document.querySelector("anef-header")) {
@@ -1932,10 +2266,13 @@
 
       showStepperIfReady(apiInfos, true);
 
+      renderTrackingPanel(apiInfos);
+
       enrichApiInfos(apiInfos)
         .then((enriched) => {
           logApiInfos(enriched);
           showStepperIfReady(enriched, true);
+          renderTrackingPanel(enriched);
           addSeriesVisibilityToggle();
           addFiscalStampVisibilityToggle();
         })
@@ -1945,6 +2282,7 @@
             error
           );
           logApiInfos(apiInfos);
+          renderTrackingPanel(apiInfos);
         });
     } catch (error) {
       console.log(
