@@ -17,6 +17,9 @@ frise de progression par grandes phases (Préfecture → SDANF & SCEC → Décre
 - **Dates clés** : dépôt de la demande, récépissé de complétude, entretien
   d'assimilation, numéro de décret.
 - **Durées entre étapes** pour visualiser le temps passé à chaque phase.
+- **Estimation des délais** *(nouveau en v3.9.0)* : ancienneté du dossier, temps passé
+  dans le statut actuel et échéance légale indicative (récépissé de complétude + 18 mois)
+  avec le temps restant.
 - **Historique des changements de statut** *(nouveau en v3.7.0)* : chaque nouveau
   statut détecté lors de vos visites est enregistré localement et affiché sous forme
   de frise chronologique.

@@ -3,6 +3,15 @@
 Toutes les évolutions notables de l'extension sont documentées ici.
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## [3.9.0]
+
+### Ajouté
+- **Estimation des délais** : le panneau de suivi affiche désormais l'ancienneté du
+  dossier, le temps passé dans le statut actuel et une échéance légale indicative
+  (récépissé de complétude + 18 mois) avec le temps restant ou le dépassement. Ces
+  métriques sont également reprises dans le résumé copiable. Un avertissement rappelle
+  le caractère indicatif et la variabilité selon les préfectures.
+
 ## [3.8.0]
 
 ### Ajouté

@@ -86,7 +86,7 @@
   }
 
   // Extension version from manifest.json
-  const extensionVersion = "3.8.0";
+  const extensionVersion = "3.9.0";
   console.log(`Extension API Naturalisation - Version: ${extensionVersion}`);
 
   // Fonction de décryptage dédiée à Kamal : Round 2
@@ -1892,6 +1892,79 @@
     return STATUS_ALERTS[String(statutCode).toLowerCase()] || null;
   }
 
+  function durationFromTo(startRaw, endDate) {
+    const start = parseAnchorDate(startRaw);
+    if (!start) return null;
+    return formatDurationBetween(start, endDate);
+  }
+
+  // Calcule les métriques de délais affichées dans le panneau de suivi.
+  // L'échéance légale s'appuie sur le délai de 18 mois courant à compter de la
+  // remise du récépissé de dossier complet (réductible/prolongeable).
+  function computeDossierMetrics(apiInfos) {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const cards = [];
+
+    const startRaw = apiInfos.demandeDate || apiInfos.dossierDepotDate;
+    const anciennete = durationFromTo(startRaw, now);
+    if (anciennete) {
+      cards.push({
+        label: "Ancienneté du dossier",
+        value: anciennete,
+        sub: `depuis le ${formatDate(startRaw)}`,
+      });
+    }
+
+    const dansStatut = durationFromTo(apiInfos.dateStatut, now);
+    if (dansStatut) {
+      cards.push({
+        label: "Dans ce statut depuis",
+        value: dansStatut,
+        sub: `le ${formatDate(apiInfos.dateStatut)}`,
+      });
+    }
+
+    const recepisseDate = parseAnchorDate(apiInfos.recepisseCreated);
+    if (recepisseDate) {
+      const deadline = new Date(recepisseDate);
+      deadline.setMonth(deadline.getMonth() + 18);
+      let sub;
+      if (deadline >= now) {
+        const remaining = formatDurationBetween(now, deadline);
+        sub = remaining ? `dans ~${remaining}` : "échéance imminente";
+      } else {
+        const over = formatDurationBetween(deadline, now);
+        sub = over ? `dépassée de ~${over}` : "échéance dépassée";
+      }
+      cards.push({
+        label: "Échéance légale indicative (récépissé + 18 mois)",
+        value: formatDate(deadline.toISOString()),
+        sub,
+      });
+    }
+
+    return cards;
+  }
+
+  function buildMetricsHtml(apiInfos) {
+    const cards = computeDossierMetrics(apiInfos);
+    if (!cards.length) return "";
+    let html = '<div class="anf-metrics">';
+    cards.forEach((card) => {
+      html += `
+        <div class="anf-metric">
+          <div class="anf-metric-label">${escapeHtml(card.label)}</div>
+          <div class="anf-metric-value">${escapeHtml(card.value)}</div>
+          <div class="anf-metric-sub">${escapeHtml(card.sub)}</div>
+        </div>`;
+    });
+    html += "</div>";
+    html +=
+      '<p class="anf-metrics-note">Estimation indicative : le délai légal de 18 mois court à compter de la remise du récépissé de dossier complet et peut être réduit ou prolongé. Les délais réels varient fortement selon les préfectures.</p>';
+    return html;
+  }
+
   function buildDossierSummaryText(apiInfos, history) {
     const lines = [];
     lines.push("Suivi de ma demande de naturalisation");
@@ -1924,6 +1997,14 @@
     }
     if (apiInfos.decretId) {
       lines.push(`N° de décret : ${apiInfos.decretId}`);
+    }
+
+    const metrics = computeDossierMetrics(apiInfos);
+    if (metrics.length) {
+      lines.push("");
+      metrics.forEach((card) => {
+        lines.push(`${card.label} : ${card.value} (${card.sub})`);
+      });
     }
 
     if (Array.isArray(history) && history.length > 1) {
@@ -2111,6 +2192,41 @@
         border-color: #22c55e;
         color: #166534;
       }
+      #anf-extension-tracking-panel .anf-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+        margin: 4px 0 6px;
+      }
+      #anf-extension-tracking-panel .anf-metric {
+        background: #fff;
+        border: 1px solid #e3e3ef;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      #anf-extension-tracking-panel .anf-metric-label {
+        font-size: 10px;
+        color: var(--anf-muted);
+        line-height: 1.2;
+      }
+      #anf-extension-tracking-panel .anf-metric-value {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--anf-bleu);
+        margin-top: 2px;
+      }
+      #anf-extension-tracking-panel .anf-metric-sub {
+        font-size: 10px;
+        color: var(--anf-muted);
+        margin-top: 1px;
+      }
+      #anf-extension-tracking-panel .anf-metrics-note {
+        margin: 0 0 8px;
+        font-size: 10px;
+        font-style: italic;
+        color: var(--anf-muted);
+        line-height: 1.35;
+      }
     `;
     document.head.appendChild(styleEl);
   }
@@ -2183,7 +2299,7 @@
             <button type="button" class="anf-suivi-btn" data-action="toggle">${collapsed ? "Afficher" : "Masquer"}</button>
           </div>
         </div>
-        <div class="anf-suivi-body">${itemsHtml}</div>
+        <div class="anf-suivi-body">${buildMetricsHtml(apiInfos)}${itemsHtml}</div>
       `;
 
       const copyBtn = panel.querySelector('[data-action="copy"]');
