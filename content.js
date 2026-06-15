@@ -86,7 +86,7 @@
   }
 
   // Extension version from manifest.json
-  const extensionVersion = "3.7.0";
+  const extensionVersion = "3.8.0";
   console.log(`Extension API Naturalisation - Version: ${extensionVersion}`);
 
   // Fonction de décryptage dédiée à Kamal : Round 2
@@ -1786,12 +1786,122 @@
     return history;
   }
 
+  // Statuts qui appellent une action ou une vigilance particulière de la part
+  // du demandeur. Clé = code de statut en minuscules.
+  const STATUS_ALERTS = {
+    verification_formelle_mise_en_demeure: {
+      level: "action",
+      title: "Action requise : mise en demeure",
+      message:
+        "La préfecture vous a adressé une mise en demeure. Répondez et fournissez les éléments demandés dans le délai indiqué pour éviter un classement sans suite.",
+    },
+    instruction_recepisse_completude_a_envoyer_retour_complement_a_traiter: {
+      level: "action",
+      title: "Action requise : compléments demandés",
+      message:
+        "Des pièces complémentaires vous ont été demandées. Déposez-les sur le portail dès que possible : le dossier reste en attente tant qu'elles ne sont pas fournies.",
+    },
+    prenat_en_attente_complements: {
+      level: "action",
+      title: "Action requise : compléments demandés",
+      message:
+        "Des pièces complémentaires sont attendues pour poursuivre l'instruction. Déposez-les sur le portail.",
+    },
+    ea_demande_report_ea: {
+      level: "warning",
+      title: "Entretien : demande de report en cours",
+      message:
+        "Une demande de report de l'entretien d'assimilation est en cours. Vérifiez vos messages sur le portail pour la nouvelle convocation.",
+    },
+    ea_en_attente_ea: {
+      level: "info",
+      title: "En attente de convocation à l'entretien",
+      message:
+        "Votre dossier attend une convocation à l'entretien d'assimilation. Surveillez vos courriers et le portail.",
+    },
+    demande_en_cours_rapo: {
+      level: "warning",
+      title: "RAPO en cours",
+      message:
+        "Un recours administratif préalable obligatoire (RAPO) est en cours d'examen. Conservez une copie de votre recours et des accusés de réception.",
+    },
+    decision_negative_en_delais_recours: {
+      level: "action",
+      title: "Décision défavorable — délai de recours",
+      message:
+        "Une décision défavorable a été notifiée. Vous disposez en général de 2 mois pour former un recours (RAPO, puis le cas échéant recours contentieux). N'attendez pas la fin du délai.",
+    },
+    irrecevabilite_manifeste: {
+      level: "action",
+      title: "Irrecevabilité manifeste",
+      message:
+        "Votre demande a été jugée irrecevable. Vérifiez le motif et les voies de recours indiquées dans la notification.",
+    },
+    irrecevabilite_manifeste_en_delais_recours: {
+      level: "action",
+      title: "Irrecevabilité — délai de recours",
+      message:
+        "Une décision d'irrecevabilité a été notifiée et vous êtes dans le délai de recours (en général 2 mois). Agissez rapidement si vous souhaitez la contester.",
+    },
+    css_notifie: {
+      level: "action",
+      title: "Classement sans suite notifié",
+      message:
+        "Votre dossier a été classé sans suite. Examinez le motif ; un recours est possible dans le délai indiqué sur la notification.",
+    },
+    css_en_delais_recours: {
+      level: "action",
+      title: "Classement sans suite — délai de recours",
+      message:
+        "Un classement sans suite a été notifié et vous êtes dans le délai de recours. Vous pouvez le contester (RAPO) sous le délai légal.",
+    },
+    css_mise_en_demeure_a_affecter: {
+      level: "warning",
+      title: "Procédure de classement sans suite en préparation",
+      message:
+        "Une mise en demeure liée à un classement sans suite est en préparation. Assurez-vous que votre dossier est complet pour l'éviter.",
+    },
+    css_mise_en_demeure_a_rediger: {
+      level: "warning",
+      title: "Procédure de classement sans suite en préparation",
+      message:
+        "Une mise en demeure liée à un classement sans suite est en préparation. Assurez-vous que votre dossier est complet pour l'éviter.",
+    },
+    decret_naturalisation_publie: {
+      level: "success",
+      title: "Félicitations : décret de naturalisation publié",
+      message:
+        "Votre décret de naturalisation a été publié. Surveillez la notification officielle et les modalités de la cérémonie.",
+    },
+    decret_publie: {
+      level: "success",
+      title: "Félicitations : décret de naturalisation publié",
+      message:
+        "Votre décret de naturalisation a été publié. Surveillez la notification officielle et les modalités de la cérémonie.",
+    },
+    demande_traitee: {
+      level: "success",
+      title: "Demande finalisée",
+      message:
+        "Le traitement de votre demande est finalisé. Suivez les dernières notifications sur le portail.",
+    },
+  };
+
+  function getStatusAlert(statutCode) {
+    if (!statutCode) return null;
+    return STATUS_ALERTS[String(statutCode).toLowerCase()] || null;
+  }
+
   function buildDossierSummaryText(apiInfos, history) {
     const lines = [];
     lines.push("Suivi de ma demande de naturalisation");
     lines.push("-------------------------------------");
     if (apiInfos.statutDescription) {
       lines.push(`Statut actuel : ${apiInfos.statutDescription}`);
+    }
+    const alert = getStatusAlert(apiInfos.statutCode);
+    if (alert) {
+      lines.push(`>> ${alert.title} : ${alert.message}`);
     }
     if (apiInfos.dateStatut) {
       const rel = apiInfos.dateStatutRelative
@@ -1965,6 +2075,42 @@
       #anf-extension-tracking-panel[data-collapsed="true"] .anf-suivi-body {
         display: none;
       }
+      #anf-extension-tracking-panel .anf-alert {
+        margin: 0 0 10px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        border-left-width: 4px;
+      }
+      #anf-extension-tracking-panel .anf-alert-title {
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 2px;
+      }
+      #anf-extension-tracking-panel .anf-alert-msg {
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-action {
+        background: #fef2f2;
+        border-color: #e1000f;
+        color: #7f1d1d;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-warning {
+        background: #fff7ed;
+        border-color: #f59e0b;
+        color: #7c2d12;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-info {
+        background: #eff6ff;
+        border-color: #000091;
+        color: #1e3a8a;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-success {
+        background: #f0fdf4;
+        border-color: #22c55e;
+        color: #166534;
+      }
     `;
     document.head.appendChild(styleEl);
   }
@@ -1986,6 +2132,18 @@
 
       const collapsed = panel.getAttribute("data-collapsed") === "true";
       panel.setAttribute("data-collapsed", collapsed ? "true" : "false");
+
+      const alert = getStatusAlert(apiInfos.statutCode);
+      let alertHtml = "";
+      if (alert) {
+        alertHtml = `
+          <div class="anf-alert is-${alert.level}" role="${
+          alert.level === "info" || alert.level === "success" ? "status" : "alert"
+        }">
+            <div class="anf-alert-title">${escapeHtml(alert.title)}</div>
+            <div class="anf-alert-msg">${escapeHtml(alert.message)}</div>
+          </div>`;
+      }
 
       let itemsHtml = "";
       if (history.length <= 1) {
@@ -2017,6 +2175,7 @@
       }
 
       panel.innerHTML = `
+        ${alertHtml}
         <div class="anf-suivi-head">
           <h3 class="anf-suivi-title">Suivi &amp; historique</h3>
           <div class="anf-suivi-actions">

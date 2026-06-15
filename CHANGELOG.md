@@ -3,6 +3,16 @@
 Toutes les évolutions notables de l'extension sont documentées ici.
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## [3.8.0]
+
+### Ajouté
+- **Alertes « action requise »** : un encart contextuel met en évidence les statuts
+  critiques (mise en demeure, compléments demandés, RAPO, décision défavorable ou
+  irrecevabilité en délai de recours, classement sans suite) avec un conseil
+  d'action, ainsi que les bonnes nouvelles (décret publié, demande finalisée).
+  Quatre niveaux de couleur : action (rouge), vigilance (orange), info (bleu),
+  succès (vert). L'alerte est aussi reprise dans le résumé copiable.
+
 ## [3.7.0]
 
 ### Ajouté

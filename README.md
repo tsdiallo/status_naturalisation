@@ -22,6 +22,10 @@ frise de progression par grandes phases (Préfecture → SDANF & SCEC → Décre
   de frise chronologique.
 - **Résumé copiable** *(nouveau en v3.7.0)* : un bouton copie un résumé texte de votre
   dossier (statut, dates, historique) — pratique pour le partager sur les forums d'entraide.
+- **Alertes « action requise »** *(nouveau en v3.8.0)* : un encart met en évidence les
+  statuts critiques (mise en demeure, compléments demandés, RAPO, décision défavorable
+  ou irrecevabilité en délai de recours, classement sans suite) avec un conseil d'action,
+  ainsi que les bonnes nouvelles (décret publié).
 - **Masquage des données sensibles** (numéro de série, timbre fiscal) avec bouton
   afficher/masquer.
 
