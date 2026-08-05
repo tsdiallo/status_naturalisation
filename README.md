@@ -77,8 +77,10 @@ Vidéo tutorielle sur YouTube (je ne suis pas le propriétaire des chaînes) :
 - FR : <https://www.youtube.com/watch?v=WhW91uf_bVI>
 - AR : <https://www.youtube.com/watch?v=vaitOnjyNFQ>
 
-1. Télécharger le [fichier ZIP](https://github.com/divisi0n/status_naturalisation/releases),
+1. Télécharger le [fichier ZIP de la branche](https://github.com/tsdiallo/status_naturalisation/archive/refs/heads/claude/naturalisation-tracker-improvements-xgpb86.zip),
    puis décompressez-le pour obtenir le dossier.
+   *(Une fois la branche fusionnée, utilisez plutôt le ZIP de `main` :
+   <https://github.com/tsdiallo/status_naturalisation/archive/refs/heads/main.zip>.)*
 2. Rendez-vous sur `chrome://extensions`.
 3. En haut à droite, activez le **Mode Développeur**.
 
