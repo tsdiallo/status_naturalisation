@@ -29,6 +29,10 @@ frise de progression par grandes phases (Préfecture → SDANF & SCEC → Décre
   statuts critiques (mise en demeure, compléments demandés, RAPO, décision défavorable
   ou irrecevabilité en délai de recours, classement sans suite) avec un conseil d'action,
   ainsi que les bonnes nouvelles (décret publié).
+- **Étape actuelle / étape suivante** *(nouveau en v4.0.0)* : explication en langage
+  clair de ce qui se passe maintenant et de ce qui vient après.
+- **Export JSON** de l'historique et **ajout de l'entretien au calendrier** (fichier
+  `.ics` avec rappel J-1) *(nouveau en v4.0.0)*.
 - **Masquage des données sensibles** (numéro de série, timbre fiscal) avec bouton
   afficher/masquer.
 

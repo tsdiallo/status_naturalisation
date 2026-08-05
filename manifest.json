@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Statut API du Dossier Naturalisation",
-  "version": "3.9.0",
+  "version": "4.0.0",
   "description": "Affiche la progression détaillée de votre dossier de naturalisation sur le portail ANEF, avec historique des changements de statut et résumé copiable.",
   "permissions": [
     "scripting",

@@ -3,6 +3,23 @@
 Toutes les évolutions notables de l'extension sont documentées ici.
 Le format s'inspire de [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/).
 
+## [4.0.0]
+
+### Ajouté
+- **Carte « Étape actuelle / étape suivante »** : explication en langage clair de ce
+  qui se passe à l'étape en cours (mini-glossaire des 13 étapes) et aperçu de l'étape
+  qui vient après. Reprise dans le résumé copiable.
+- **Chips d'informations** : n° de dossier, code technique du statut, date d'entretien,
+  plateforme, n° de décret, visibles d'un coup d'œil en tête du panneau.
+- **Export JSON** de l'historique et des informations du dossier (sauvegarde locale
+  avant un éventuel vidage des données de site).
+- **Entretien → calendrier** : téléchargement d'un fichier `.ics` (avec rappel J-1)
+  quand une date d'entretien d'assimilation à venir est détectée.
+
+### Modifié
+- Polissage du panneau : effets de survol sur les cartes métriques et la frise
+  chronologique, disposition responsive de la carte d'étape.
+
 ## [3.9.0]
 
 ### Ajouté

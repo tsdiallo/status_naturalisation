@@ -86,7 +86,7 @@
   }
 
   // Extension version from manifest.json
-  const extensionVersion = "3.9.0";
+  const extensionVersion = "4.0.0";
   console.log(`Extension API Naturalisation - Version: ${extensionVersion}`);
 
   // Fonction de décryptage dédiée à Kamal : Round 2
@@ -1965,6 +1965,183 @@
     return html;
   }
 
+  // Explications en langage clair de chaque étape de la frise, affichées dans
+  // la carte « Étape actuelle / étape suivante » du panneau de suivi.
+  const STEP_EXPLANATIONS = {
+    demande_envoyee:
+      "Votre demande a été transmise via le portail ANEF. Elle attend d'être prise en charge par la plateforme d'instruction.",
+    examen_pieces:
+      "La préfecture vérifie que toutes les pièces de votre dossier sont présentes et conformes. Des compléments peuvent vous être demandés.",
+    demande_deposee:
+      "Votre demande est officiellement déposée et enregistrée. Elle entre dans le circuit d'instruction préfectorale.",
+    traitement_plateforme_1:
+      "La plateforme d'instruction poursuit le traitement administratif de votre dossier.",
+    recepisse_completude:
+      "Votre dossier est déclaré complet : le récépissé de complétude marque le point de départ du délai légal d'instruction (18 mois).",
+    traitement_plateforme_2:
+      "La plateforme d'instruction poursuit le traitement de votre dossier avant l'entretien.",
+    entretien_assimilation:
+      "Vous êtes (ou serez) convoqué à l'entretien d'assimilation : vérification de votre connaissance de la langue, de l'histoire et des valeurs de la République.",
+    traitement_plateforme_3:
+      "Après l'entretien, la préfecture finalise son instruction et prépare sa proposition de décision.",
+    traitement_sdanf_1:
+      "Votre dossier est transmis à la Sous-Direction de l'Accès à la Nationalité Française (SDANF) pour le contrôle national.",
+    traitement_scec:
+      "Le Service Central d'État Civil (SCEC) vérifie et valide vos pièces d'état civil en vue de l'établissement de vos actes français.",
+    traitement_sdanf_2:
+      "La SDANF finalise le contrôle de votre dossier avant son insertion dans un décret de naturalisation.",
+    decision_prise:
+      "Une décision a été prise sur votre demande. En cas d'issue favorable, votre nom sera inséré dans un décret publié au Journal officiel.",
+    ceremonie_naturalisation:
+      "Félicitations ! Il ne reste que la cérémonie d'accueil dans la citoyenneté française, organisée par votre préfecture.",
+  };
+
+  function buildNextStepHtml(apiInfos) {
+    try {
+      const currentIndex = inferRecreatedTrackingIndex(apiInfos.statutCode);
+      if (currentIndex == null || currentIndex < 0) return "";
+      const current = RECREATED_TRACKING_STEPS[currentIndex];
+      if (!current) return "";
+      const next = RECREATED_TRACKING_STEPS[currentIndex + 1] || null;
+      const explanation = STEP_EXPLANATIONS[current.key] || "";
+
+      let html = '<div class="anf-nextstep">';
+      html += `
+        <div class="anf-nextstep-now">
+          <span class="anf-nextstep-tag">Étape actuelle</span>
+          <div class="anf-nextstep-title">${escapeHtml(current.title)}</div>
+          ${explanation ? `<p class="anf-nextstep-text">${escapeHtml(explanation)}</p>` : ""}
+        </div>`;
+      if (next) {
+        html += `
+          <div class="anf-nextstep-next">
+            <span class="anf-nextstep-tag is-next">Étape suivante</span>
+            <div class="anf-nextstep-title">${escapeHtml(next.title)}</div>
+          </div>`;
+      }
+      html += "</div>";
+      return html;
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function buildInfoChipsHtml(apiInfos) {
+    const chips = [];
+    if (apiInfos.idDossier) {
+      chips.push({ label: "Dossier", value: `n° ${apiInfos.idDossier}` });
+    }
+    if (apiInfos.statutCode) {
+      chips.push({ label: "Code", value: String(apiInfos.statutCode) });
+    }
+    if (apiInfos.assimilationDate) {
+      chips.push({
+        label: "Entretien",
+        value: formatDate(apiInfos.assimilationDate),
+      });
+    }
+    if (apiInfos.assimilationPlateforme) {
+      chips.push({ label: "Plateforme", value: apiInfos.assimilationPlateforme });
+    }
+    if (apiInfos.decretId) {
+      chips.push({ label: "Décret", value: `n° ${apiInfos.decretId}` });
+    }
+    if (!chips.length) return "";
+    return (
+      '<div class="anf-chips">' +
+      chips
+        .map(
+          (chip) =>
+            `<span class="anf-chip"><span class="anf-chip-label">${escapeHtml(chip.label)}</span>${escapeHtml(chip.value)}</span>`
+        )
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function downloadFile(filename, content, mimeType) {
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function exportHistoryJson(apiInfos, history) {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      extensionVersion,
+      idDossier: apiInfos.idDossier,
+      statutCode: apiInfos.statutCode,
+      statutDescription: apiInfos.statutDescription,
+      dateStatut: apiInfos.dateStatut,
+      demandeDate: apiInfos.demandeDate,
+      recepisseCreated: apiInfos.recepisseCreated,
+      assimilationDate: apiInfos.assimilationDate,
+      decretId: apiInfos.decretId,
+      history,
+    };
+    return downloadFile(
+      `suivi-naturalisation-${apiInfos.idDossier || "dossier"}.json`,
+      JSON.stringify(payload, null, 2),
+      "application/json"
+    );
+  }
+
+  function toIcsUtcStamp(date) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return (
+      date.getUTCFullYear() +
+      pad(date.getUTCMonth() + 1) +
+      pad(date.getUTCDate()) +
+      "T" +
+      pad(date.getUTCHours()) +
+      pad(date.getUTCMinutes()) +
+      "00Z"
+    );
+  }
+
+  function exportEntretienIcs(apiInfos) {
+    const start = new Date(apiInfos.assimilationDate);
+    if (isNaN(start.getTime())) return false;
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const location = apiInfos.assimilationPlateforme
+      ? apiInfos.assimilationPlateforme.replace(/[\n\r,;]/g, " ")
+      : "";
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//status_naturalisation//extension//FR",
+      "BEGIN:VEVENT",
+      `UID:anf-entretien-${apiInfos.idDossier || "dossier"}@status-naturalisation`,
+      `DTSTAMP:${toIcsUtcStamp(new Date())}`,
+      `DTSTART:${toIcsUtcStamp(start)}`,
+      `DTEND:${toIcsUtcStamp(end)}`,
+      "SUMMARY:Entretien d'assimilation — naturalisation",
+      location ? `LOCATION:${location}` : null,
+      "DESCRIPTION:Entretien d'assimilation pour la demande de naturalisation. Pensez à apporter votre convocation et vos pièces d'identité.",
+      "BEGIN:VALARM",
+      "TRIGGER:-P1D",
+      "ACTION:DISPLAY",
+      "DESCRIPTION:Entretien d'assimilation demain",
+      "END:VALARM",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+    return downloadFile("entretien-assimilation.ics", ics, "text/calendar");
+  }
+
   function buildDossierSummaryText(apiInfos, history) {
     const lines = [];
     lines.push("Suivi de ma demande de naturalisation");
@@ -1975,6 +2152,16 @@
     const alert = getStatusAlert(apiInfos.statutCode);
     if (alert) {
       lines.push(`>> ${alert.title} : ${alert.message}`);
+    }
+    try {
+      const stepIndex = inferRecreatedTrackingIndex(apiInfos.statutCode);
+      const currentStep = RECREATED_TRACKING_STEPS[stepIndex];
+      const nextStep = RECREATED_TRACKING_STEPS[stepIndex + 1];
+      if (currentStep) {
+        lines.push(`Étape : ${currentStep.title}${nextStep ? ` (suivante : ${nextStep.title})` : ""}`);
+      }
+    } catch (error) {
+      /* étape non déterminable : on ignore */
     }
     if (apiInfos.dateStatut) {
       const rel = apiInfos.dateStatutRelative
@@ -2227,6 +2414,96 @@
         color: var(--anf-muted);
         line-height: 1.35;
       }
+      #anf-extension-tracking-panel .anf-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 2px 0 8px;
+      }
+      #anf-extension-tracking-panel .anf-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: #fff;
+        border: 1px solid #e3e3ef;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--anf-ink);
+      }
+      #anf-extension-tracking-panel .anf-chip-label {
+        color: var(--anf-muted);
+        font-weight: 400;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 9px;
+      }
+      #anf-extension-tracking-panel .anf-nextstep {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 8px;
+        margin: 0 0 8px;
+      }
+      @media (max-width: 640px) {
+        #anf-extension-tracking-panel .anf-nextstep {
+          grid-template-columns: 1fr;
+        }
+      }
+      #anf-extension-tracking-panel .anf-nextstep-now,
+      #anf-extension-tracking-panel .anf-nextstep-next {
+        background: #fff;
+        border: 1px solid #e3e3ef;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-now {
+        border-left: 4px solid var(--anf-bleu);
+      }
+      #anf-extension-tracking-panel .anf-nextstep-next {
+        border-left: 4px solid #c4c4dd;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-tag {
+        display: inline-block;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--anf-bleu);
+        background: #eef0ff;
+        border-radius: 999px;
+        padding: 2px 8px;
+        margin-bottom: 4px;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-tag.is-next {
+        color: var(--anf-muted);
+        background: #f1f1f6;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--anf-ink);
+      }
+      #anf-extension-tracking-panel .anf-nextstep-text {
+        margin: 4px 0 0;
+        font-size: 11px;
+        line-height: 1.4;
+        color: #444;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item {
+        transition: background 0.15s ease;
+        border-radius: 0 6px 6px 0;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item:hover {
+        background: rgba(0, 0, 145, 0.04);
+      }
+      #anf-extension-tracking-panel .anf-metric {
+        transition: box-shadow 0.15s ease, transform 0.15s ease;
+      }
+      #anf-extension-tracking-panel .anf-metric:hover {
+        box-shadow: 0 3px 12px rgba(0, 0, 145, 0.08);
+        transform: translateY(-1px);
+      }
     `;
     document.head.appendChild(styleEl);
   }
@@ -2290,16 +2567,28 @@
         itemsHtml += "</ul>";
       }
 
+      const hasFutureEntretien = (() => {
+        const d = new Date(apiInfos.assimilationDate || "");
+        return !isNaN(d.getTime()) && d.getTime() > Date.now();
+      })();
+
       panel.innerHTML = `
         ${alertHtml}
         <div class="anf-suivi-head">
           <h3 class="anf-suivi-title">Suivi &amp; historique</h3>
           <div class="anf-suivi-actions">
             <button type="button" class="anf-suivi-btn" data-action="copy">Copier le résumé</button>
+            <button type="button" class="anf-suivi-btn" data-action="export">Exporter JSON</button>
+            ${hasFutureEntretien ? '<button type="button" class="anf-suivi-btn" data-action="ics">Entretien → calendrier</button>' : ""}
             <button type="button" class="anf-suivi-btn" data-action="toggle">${collapsed ? "Afficher" : "Masquer"}</button>
           </div>
         </div>
-        <div class="anf-suivi-body">${buildMetricsHtml(apiInfos)}${itemsHtml}</div>
+        <div class="anf-suivi-body">
+          ${buildInfoChipsHtml(apiInfos)}
+          ${buildNextStepHtml(apiInfos)}
+          ${buildMetricsHtml(apiInfos)}
+          ${itemsHtml}
+        </div>
       `;
 
       const copyBtn = panel.querySelector('[data-action="copy"]');
@@ -2311,6 +2600,30 @@
           copyBtn.textContent = ok ? "Copié ✓" : "Échec de la copie";
           setTimeout(() => {
             copyBtn.textContent = previous;
+          }, 1800);
+        });
+      }
+
+      const exportBtn = panel.querySelector('[data-action="export"]');
+      if (exportBtn) {
+        exportBtn.addEventListener("click", () => {
+          const ok = exportHistoryJson(apiInfos, history);
+          const previous = exportBtn.textContent;
+          exportBtn.textContent = ok ? "Exporté ✓" : "Échec de l'export";
+          setTimeout(() => {
+            exportBtn.textContent = previous;
+          }, 1800);
+        });
+      }
+
+      const icsBtn = panel.querySelector('[data-action="ics"]');
+      if (icsBtn) {
+        icsBtn.addEventListener("click", () => {
+          const ok = exportEntretienIcs(apiInfos);
+          const previous = icsBtn.textContent;
+          icsBtn.textContent = ok ? "Téléchargé ✓" : "Échec";
+          setTimeout(() => {
+            icsBtn.textContent = previous;
           }, 1800);
         });
       }
