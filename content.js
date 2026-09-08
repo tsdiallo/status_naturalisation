@@ -86,7 +86,7 @@
   }
 
   // Extension version from manifest.json
-  const extensionVersion = "3.6.1";
+  const extensionVersion = "4.0.0";
   console.log(`Extension API Naturalisation - Version: ${extensionVersion}`);
 
   // Fonction de décryptage dédiée à Kamal : Round 2
@@ -471,6 +471,7 @@
 
   function removeStepperIfPresent() {
     document.getElementById("anf-extension-stepper-root")?.remove();
+    document.getElementById("anf-extension-tracking-panel")?.remove();
   }
 
   async function fetchApiInfos() {
@@ -1731,6 +1732,927 @@
     return true;
   }
 
+  // --- Suivi : historique des changements de statut + résumé copiable -------
+  // Stocké dans le localStorage de l'origine ANEF : aucune donnée ne quitte le
+  // navigateur. Tout est défensif (try/catch silencieux) pour ne jamais
+  // perturber le rendu du stepper si le stockage est indisponible.
+  const HISTORY_STORAGE_PREFIX = "anfExtensionStatusHistory";
+
+  function getHistoryStorageKey(apiInfos) {
+    const id = apiInfos && apiInfos.idDossier ? String(apiInfos.idDossier) : "default";
+    return `${HISTORY_STORAGE_PREFIX}:${id}`;
+  }
+
+  function loadStatusHistory(apiInfos) {
+    try {
+      const raw = window.localStorage.getItem(getHistoryStorageKey(apiInfos));
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch (error) {
+      return [];
+    }
+  }
+
+  function saveStatusHistory(apiInfos, history) {
+    try {
+      window.localStorage.setItem(
+        getHistoryStorageKey(apiInfos),
+        JSON.stringify(history.slice(-100))
+      );
+    } catch (error) {
+      /* quota plein ou stockage bloqué : on ignore */
+    }
+  }
+
+  function recordStatusHistory(apiInfos) {
+    const history = loadStatusHistory(apiInfos);
+    if (!apiInfos || !apiInfos.statutCode) return history;
+
+    const statutCode = String(apiInfos.statutCode).toLowerCase();
+    const last = history[history.length - 1];
+    if (last && String(last.statutCode).toLowerCase() === statutCode) {
+      return history;
+    }
+
+    history.push({
+      statutCode,
+      statutDescription:
+        apiInfos.statutDescription || getStatusDescription(statutCode),
+      dateStatut: apiInfos.dateStatut || null,
+      recordedAt: new Date().toISOString(),
+    });
+    saveStatusHistory(apiInfos, history);
+    return history;
+  }
+
+  // Statuts qui appellent une action ou une vigilance particulière de la part
+  // du demandeur. Clé = code de statut en minuscules.
+  const STATUS_ALERTS = {
+    verification_formelle_mise_en_demeure: {
+      level: "action",
+      title: "Action requise : mise en demeure",
+      message:
+        "La préfecture vous a adressé une mise en demeure. Répondez et fournissez les éléments demandés dans le délai indiqué pour éviter un classement sans suite.",
+    },
+    instruction_recepisse_completude_a_envoyer_retour_complement_a_traiter: {
+      level: "action",
+      title: "Action requise : compléments demandés",
+      message:
+        "Des pièces complémentaires vous ont été demandées. Déposez-les sur le portail dès que possible : le dossier reste en attente tant qu'elles ne sont pas fournies.",
+    },
+    prenat_en_attente_complements: {
+      level: "action",
+      title: "Action requise : compléments demandés",
+      message:
+        "Des pièces complémentaires sont attendues pour poursuivre l'instruction. Déposez-les sur le portail.",
+    },
+    ea_demande_report_ea: {
+      level: "warning",
+      title: "Entretien : demande de report en cours",
+      message:
+        "Une demande de report de l'entretien d'assimilation est en cours. Vérifiez vos messages sur le portail pour la nouvelle convocation.",
+    },
+    ea_en_attente_ea: {
+      level: "info",
+      title: "En attente de convocation à l'entretien",
+      message:
+        "Votre dossier attend une convocation à l'entretien d'assimilation. Surveillez vos courriers et le portail.",
+    },
+    demande_en_cours_rapo: {
+      level: "warning",
+      title: "RAPO en cours",
+      message:
+        "Un recours administratif préalable obligatoire (RAPO) est en cours d'examen. Conservez une copie de votre recours et des accusés de réception.",
+    },
+    decision_negative_en_delais_recours: {
+      level: "action",
+      title: "Décision défavorable — délai de recours",
+      message:
+        "Une décision défavorable a été notifiée. Vous disposez en général de 2 mois pour former un recours (RAPO, puis le cas échéant recours contentieux). N'attendez pas la fin du délai.",
+    },
+    irrecevabilite_manifeste: {
+      level: "action",
+      title: "Irrecevabilité manifeste",
+      message:
+        "Votre demande a été jugée irrecevable. Vérifiez le motif et les voies de recours indiquées dans la notification.",
+    },
+    irrecevabilite_manifeste_en_delais_recours: {
+      level: "action",
+      title: "Irrecevabilité — délai de recours",
+      message:
+        "Une décision d'irrecevabilité a été notifiée et vous êtes dans le délai de recours (en général 2 mois). Agissez rapidement si vous souhaitez la contester.",
+    },
+    css_notifie: {
+      level: "action",
+      title: "Classement sans suite notifié",
+      message:
+        "Votre dossier a été classé sans suite. Examinez le motif ; un recours est possible dans le délai indiqué sur la notification.",
+    },
+    css_en_delais_recours: {
+      level: "action",
+      title: "Classement sans suite — délai de recours",
+      message:
+        "Un classement sans suite a été notifié et vous êtes dans le délai de recours. Vous pouvez le contester (RAPO) sous le délai légal.",
+    },
+    css_mise_en_demeure_a_affecter: {
+      level: "warning",
+      title: "Procédure de classement sans suite en préparation",
+      message:
+        "Une mise en demeure liée à un classement sans suite est en préparation. Assurez-vous que votre dossier est complet pour l'éviter.",
+    },
+    css_mise_en_demeure_a_rediger: {
+      level: "warning",
+      title: "Procédure de classement sans suite en préparation",
+      message:
+        "Une mise en demeure liée à un classement sans suite est en préparation. Assurez-vous que votre dossier est complet pour l'éviter.",
+    },
+    decret_naturalisation_publie: {
+      level: "success",
+      title: "Félicitations : décret de naturalisation publié",
+      message:
+        "Votre décret de naturalisation a été publié. Surveillez la notification officielle et les modalités de la cérémonie.",
+    },
+    decret_publie: {
+      level: "success",
+      title: "Félicitations : décret de naturalisation publié",
+      message:
+        "Votre décret de naturalisation a été publié. Surveillez la notification officielle et les modalités de la cérémonie.",
+    },
+    demande_traitee: {
+      level: "success",
+      title: "Demande finalisée",
+      message:
+        "Le traitement de votre demande est finalisé. Suivez les dernières notifications sur le portail.",
+    },
+  };
+
+  function getStatusAlert(statutCode) {
+    if (!statutCode) return null;
+    return STATUS_ALERTS[String(statutCode).toLowerCase()] || null;
+  }
+
+  function durationFromTo(startRaw, endDate) {
+    const start = parseAnchorDate(startRaw);
+    if (!start) return null;
+    return formatDurationBetween(start, endDate);
+  }
+
+  // Calcule les métriques de délais affichées dans le panneau de suivi.
+  // L'échéance légale s'appuie sur le délai de 18 mois courant à compter de la
+  // remise du récépissé de dossier complet (réductible/prolongeable).
+  function computeDossierMetrics(apiInfos) {
+    const now = new Date();
+    now.setHours(0, 0, 0, 0);
+    const cards = [];
+
+    const startRaw = apiInfos.demandeDate || apiInfos.dossierDepotDate;
+    const anciennete = durationFromTo(startRaw, now);
+    if (anciennete) {
+      cards.push({
+        label: "Ancienneté du dossier",
+        value: anciennete,
+        sub: `depuis le ${formatDate(startRaw)}`,
+      });
+    }
+
+    const dansStatut = durationFromTo(apiInfos.dateStatut, now);
+    if (dansStatut) {
+      cards.push({
+        label: "Dans ce statut depuis",
+        value: dansStatut,
+        sub: `le ${formatDate(apiInfos.dateStatut)}`,
+      });
+    }
+
+    const recepisseDate = parseAnchorDate(apiInfos.recepisseCreated);
+    if (recepisseDate) {
+      const deadline = new Date(recepisseDate);
+      deadline.setMonth(deadline.getMonth() + 18);
+      let sub;
+      if (deadline >= now) {
+        const remaining = formatDurationBetween(now, deadline);
+        sub = remaining ? `dans ~${remaining}` : "échéance imminente";
+      } else {
+        const over = formatDurationBetween(deadline, now);
+        sub = over ? `dépassée de ~${over}` : "échéance dépassée";
+      }
+      cards.push({
+        label: "Échéance légale indicative (récépissé + 18 mois)",
+        value: formatDate(deadline.toISOString()),
+        sub,
+      });
+    }
+
+    return cards;
+  }
+
+  function buildMetricsHtml(apiInfos) {
+    const cards = computeDossierMetrics(apiInfos);
+    if (!cards.length) return "";
+    let html = '<div class="anf-metrics">';
+    cards.forEach((card) => {
+      html += `
+        <div class="anf-metric">
+          <div class="anf-metric-label">${escapeHtml(card.label)}</div>
+          <div class="anf-metric-value">${escapeHtml(card.value)}</div>
+          <div class="anf-metric-sub">${escapeHtml(card.sub)}</div>
+        </div>`;
+    });
+    html += "</div>";
+    html +=
+      '<p class="anf-metrics-note">Estimation indicative : le délai légal de 18 mois court à compter de la remise du récépissé de dossier complet et peut être réduit ou prolongé. Les délais réels varient fortement selon les préfectures.</p>';
+    return html;
+  }
+
+  // Explications en langage clair de chaque étape de la frise, affichées dans
+  // la carte « Étape actuelle / étape suivante » du panneau de suivi.
+  const STEP_EXPLANATIONS = {
+    demande_envoyee:
+      "Votre demande a été transmise via le portail ANEF. Elle attend d'être prise en charge par la plateforme d'instruction.",
+    examen_pieces:
+      "La préfecture vérifie que toutes les pièces de votre dossier sont présentes et conformes. Des compléments peuvent vous être demandés.",
+    demande_deposee:
+      "Votre demande est officiellement déposée et enregistrée. Elle entre dans le circuit d'instruction préfectorale.",
+    traitement_plateforme_1:
+      "La plateforme d'instruction poursuit le traitement administratif de votre dossier.",
+    recepisse_completude:
+      "Votre dossier est déclaré complet : le récépissé de complétude marque le point de départ du délai légal d'instruction (18 mois).",
+    traitement_plateforme_2:
+      "La plateforme d'instruction poursuit le traitement de votre dossier avant l'entretien.",
+    entretien_assimilation:
+      "Vous êtes (ou serez) convoqué à l'entretien d'assimilation : vérification de votre connaissance de la langue, de l'histoire et des valeurs de la République.",
+    traitement_plateforme_3:
+      "Après l'entretien, la préfecture finalise son instruction et prépare sa proposition de décision.",
+    traitement_sdanf_1:
+      "Votre dossier est transmis à la Sous-Direction de l'Accès à la Nationalité Française (SDANF) pour le contrôle national.",
+    traitement_scec:
+      "Le Service Central d'État Civil (SCEC) vérifie et valide vos pièces d'état civil en vue de l'établissement de vos actes français.",
+    traitement_sdanf_2:
+      "La SDANF finalise le contrôle de votre dossier avant son insertion dans un décret de naturalisation.",
+    decision_prise:
+      "Une décision a été prise sur votre demande. En cas d'issue favorable, votre nom sera inséré dans un décret publié au Journal officiel.",
+    ceremonie_naturalisation:
+      "Félicitations ! Il ne reste que la cérémonie d'accueil dans la citoyenneté française, organisée par votre préfecture.",
+  };
+
+  function buildNextStepHtml(apiInfos) {
+    try {
+      const currentIndex = inferRecreatedTrackingIndex(apiInfos.statutCode);
+      if (currentIndex == null || currentIndex < 0) return "";
+      const current = RECREATED_TRACKING_STEPS[currentIndex];
+      if (!current) return "";
+      const next = RECREATED_TRACKING_STEPS[currentIndex + 1] || null;
+      const explanation = STEP_EXPLANATIONS[current.key] || "";
+
+      let html = '<div class="anf-nextstep">';
+      html += `
+        <div class="anf-nextstep-now">
+          <span class="anf-nextstep-tag">Étape actuelle</span>
+          <div class="anf-nextstep-title">${escapeHtml(current.title)}</div>
+          ${explanation ? `<p class="anf-nextstep-text">${escapeHtml(explanation)}</p>` : ""}
+        </div>`;
+      if (next) {
+        html += `
+          <div class="anf-nextstep-next">
+            <span class="anf-nextstep-tag is-next">Étape suivante</span>
+            <div class="anf-nextstep-title">${escapeHtml(next.title)}</div>
+          </div>`;
+      }
+      html += "</div>";
+      return html;
+    } catch (error) {
+      return "";
+    }
+  }
+
+  function buildInfoChipsHtml(apiInfos) {
+    const chips = [];
+    if (apiInfos.idDossier) {
+      chips.push({ label: "Dossier", value: `n° ${apiInfos.idDossier}` });
+    }
+    if (apiInfos.statutCode) {
+      chips.push({ label: "Code", value: String(apiInfos.statutCode) });
+    }
+    if (apiInfos.assimilationDate) {
+      chips.push({
+        label: "Entretien",
+        value: formatDate(apiInfos.assimilationDate),
+      });
+    }
+    if (apiInfos.assimilationPlateforme) {
+      chips.push({ label: "Plateforme", value: apiInfos.assimilationPlateforme });
+    }
+    if (apiInfos.decretId) {
+      chips.push({ label: "Décret", value: `n° ${apiInfos.decretId}` });
+    }
+    if (!chips.length) return "";
+    return (
+      '<div class="anf-chips">' +
+      chips
+        .map(
+          (chip) =>
+            `<span class="anf-chip"><span class="anf-chip-label">${escapeHtml(chip.label)}</span>${escapeHtml(chip.value)}</span>`
+        )
+        .join("") +
+      "</div>"
+    );
+  }
+
+  function downloadFile(filename, content, mimeType) {
+    try {
+      const blob = new Blob([content], { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      return true;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function exportHistoryJson(apiInfos, history) {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      extensionVersion,
+      idDossier: apiInfos.idDossier,
+      statutCode: apiInfos.statutCode,
+      statutDescription: apiInfos.statutDescription,
+      dateStatut: apiInfos.dateStatut,
+      demandeDate: apiInfos.demandeDate,
+      recepisseCreated: apiInfos.recepisseCreated,
+      assimilationDate: apiInfos.assimilationDate,
+      decretId: apiInfos.decretId,
+      history,
+    };
+    return downloadFile(
+      `suivi-naturalisation-${apiInfos.idDossier || "dossier"}.json`,
+      JSON.stringify(payload, null, 2),
+      "application/json"
+    );
+  }
+
+  function toIcsUtcStamp(date) {
+    const pad = (n) => String(n).padStart(2, "0");
+    return (
+      date.getUTCFullYear() +
+      pad(date.getUTCMonth() + 1) +
+      pad(date.getUTCDate()) +
+      "T" +
+      pad(date.getUTCHours()) +
+      pad(date.getUTCMinutes()) +
+      "00Z"
+    );
+  }
+
+  function exportEntretienIcs(apiInfos) {
+    const start = new Date(apiInfos.assimilationDate);
+    if (isNaN(start.getTime())) return false;
+    const end = new Date(start.getTime() + 60 * 60 * 1000);
+    const location = apiInfos.assimilationPlateforme
+      ? apiInfos.assimilationPlateforme.replace(/[\n\r,;]/g, " ")
+      : "";
+    const ics = [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//status_naturalisation//extension//FR",
+      "BEGIN:VEVENT",
+      `UID:anf-entretien-${apiInfos.idDossier || "dossier"}@status-naturalisation`,
+      `DTSTAMP:${toIcsUtcStamp(new Date())}`,
+      `DTSTART:${toIcsUtcStamp(start)}`,
+      `DTEND:${toIcsUtcStamp(end)}`,
+      "SUMMARY:Entretien d'assimilation — naturalisation",
+      location ? `LOCATION:${location}` : null,
+      "DESCRIPTION:Entretien d'assimilation pour la demande de naturalisation. Pensez à apporter votre convocation et vos pièces d'identité.",
+      "BEGIN:VALARM",
+      "TRIGGER:-P1D",
+      "ACTION:DISPLAY",
+      "DESCRIPTION:Entretien d'assimilation demain",
+      "END:VALARM",
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ]
+      .filter(Boolean)
+      .join("\r\n");
+    return downloadFile("entretien-assimilation.ics", ics, "text/calendar");
+  }
+
+  function buildDossierSummaryText(apiInfos, history) {
+    const lines = [];
+    lines.push("Suivi de ma demande de naturalisation");
+    lines.push("-------------------------------------");
+    if (apiInfos.statutDescription) {
+      lines.push(`Statut actuel : ${apiInfos.statutDescription}`);
+    }
+    const alert = getStatusAlert(apiInfos.statutCode);
+    if (alert) {
+      lines.push(`>> ${alert.title} : ${alert.message}`);
+    }
+    try {
+      const stepIndex = inferRecreatedTrackingIndex(apiInfos.statutCode);
+      const currentStep = RECREATED_TRACKING_STEPS[stepIndex];
+      const nextStep = RECREATED_TRACKING_STEPS[stepIndex + 1];
+      if (currentStep) {
+        lines.push(`Étape : ${currentStep.title}${nextStep ? ` (suivante : ${nextStep.title})` : ""}`);
+      }
+    } catch (error) {
+      /* étape non déterminable : on ignore */
+    }
+    if (apiInfos.dateStatut) {
+      const rel = apiInfos.dateStatutRelative
+        ? ` (${apiInfos.dateStatutRelative})`
+        : "";
+      lines.push(`Depuis le : ${formatDate(apiInfos.dateStatut)}${rel}`);
+    }
+    if (apiInfos.demandeDate) {
+      lines.push(`Demande déposée le : ${formatDate(apiInfos.demandeDate)}`);
+    }
+    if (apiInfos.recepisseCreated) {
+      lines.push(
+        `Récépissé de complétude : ${formatDate(apiInfos.recepisseCreated)}`
+      );
+    }
+    if (apiInfos.assimilationDate) {
+      lines.push(
+        `Entretien d'assimilation : ${formatDate(apiInfos.assimilationDate)}`
+      );
+    }
+    if (apiInfos.decretId) {
+      lines.push(`N° de décret : ${apiInfos.decretId}`);
+    }
+
+    const metrics = computeDossierMetrics(apiInfos);
+    if (metrics.length) {
+      lines.push("");
+      metrics.forEach((card) => {
+        lines.push(`${card.label} : ${card.value} (${card.sub})`);
+      });
+    }
+
+    if (Array.isArray(history) && history.length > 1) {
+      lines.push("");
+      lines.push("Historique des changements :");
+      history.slice(-12).forEach((entry) => {
+        const when = entry.dateStatut
+          ? formatDate(entry.dateStatut)
+          : formatDate(entry.recordedAt);
+        lines.push(`- ${when} : ${entry.statutDescription || entry.statutCode}`);
+      });
+    }
+
+    lines.push("");
+    lines.push(`Généré par l'extension Statut Naturalisation v${extensionVersion}`);
+    return lines.join("\n");
+  }
+
+  async function copyTextToClipboard(text) {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch (error) {
+      /* on tente le repli ci-dessous */
+    }
+    try {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(textarea);
+      return ok;
+    } catch (error) {
+      return false;
+    }
+  }
+
+  function injectTrackingPanelCss() {
+    const styleId = "anf-tracking-panel-style";
+    if (document.getElementById(styleId)) return;
+    const styleEl = document.createElement("style");
+    styleEl.id = styleId;
+    styleEl.textContent = `
+      #anf-extension-tracking-panel,
+      #anf-extension-tracking-panel * { box-sizing: border-box; }
+      #anf-extension-tracking-panel {
+        --anf-bleu: #000091;
+        --anf-ink: #161616;
+        --anf-muted: #666;
+        --anf-line: #e5e5e5;
+        font-family: inherit;
+        max-width: 1240px;
+        margin: 0 auto;
+        padding: 8px 14px 14px;
+        background: #f8f8fc;
+        border-bottom: 1px solid var(--anf-line);
+      }
+      #anf-extension-tracking-panel .anf-suivi-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+      #anf-extension-tracking-panel .anf-suivi-title {
+        margin: 0;
+        font-size: 12px;
+        font-weight: 700;
+        color: var(--anf-ink);
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      #anf-extension-tracking-panel .anf-suivi-actions {
+        display: flex;
+        gap: 8px;
+      }
+      #anf-extension-tracking-panel button.anf-suivi-btn {
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        border: 1px solid #c9c9e0;
+        background: #fff;
+        color: var(--anf-bleu);
+        border-radius: 999px;
+        padding: 4px 12px;
+        transition: background 0.15s ease, border-color 0.15s ease;
+      }
+      #anf-extension-tracking-panel button.anf-suivi-btn:hover {
+        background: #eef0ff;
+        border-color: var(--anf-bleu);
+      }
+      #anf-extension-tracking-panel .anf-suivi-timeline {
+        list-style: none !important;
+        margin: 10px 0 0;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item {
+        position: relative;
+        padding: 0 0 12px 18px;
+        border-left: 2px solid #d9d9ec;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item:last-child {
+        padding-bottom: 0;
+        border-left-color: transparent;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item::before {
+        content: "";
+        position: absolute;
+        left: -6px;
+        top: 2px;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        background: #c4c4dd;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item.is-latest::before {
+        background: var(--anf-bleu);
+        box-shadow: 0 0 0 3px rgba(0, 0, 145, 0.15);
+      }
+      #anf-extension-tracking-panel .anf-suivi-item .anf-suivi-when {
+        font-size: 10px;
+        color: var(--anf-muted);
+      }
+      #anf-extension-tracking-panel .anf-suivi-item .anf-suivi-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: var(--anf-ink);
+      }
+      #anf-extension-tracking-panel .anf-suivi-item .anf-suivi-gap {
+        font-size: 10px;
+        color: var(--anf-muted);
+        font-style: italic;
+      }
+      #anf-extension-tracking-panel .anf-suivi-empty {
+        margin: 8px 0 0;
+        font-size: 11px;
+        color: var(--anf-muted);
+      }
+      #anf-extension-tracking-panel[data-collapsed="true"] .anf-suivi-body {
+        display: none;
+      }
+      #anf-extension-tracking-panel .anf-alert {
+        margin: 0 0 10px;
+        padding: 10px 12px;
+        border-radius: 8px;
+        border: 1px solid transparent;
+        border-left-width: 4px;
+      }
+      #anf-extension-tracking-panel .anf-alert-title {
+        font-size: 12px;
+        font-weight: 700;
+        margin-bottom: 2px;
+      }
+      #anf-extension-tracking-panel .anf-alert-msg {
+        font-size: 11px;
+        line-height: 1.35;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-action {
+        background: #fef2f2;
+        border-color: #e1000f;
+        color: #7f1d1d;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-warning {
+        background: #fff7ed;
+        border-color: #f59e0b;
+        color: #7c2d12;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-info {
+        background: #eff6ff;
+        border-color: #000091;
+        color: #1e3a8a;
+      }
+      #anf-extension-tracking-panel .anf-alert.is-success {
+        background: #f0fdf4;
+        border-color: #22c55e;
+        color: #166534;
+      }
+      #anf-extension-tracking-panel .anf-metrics {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 8px;
+        margin: 4px 0 6px;
+      }
+      #anf-extension-tracking-panel .anf-metric {
+        background: #fff;
+        border: 1px solid #e3e3ef;
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      #anf-extension-tracking-panel .anf-metric-label {
+        font-size: 10px;
+        color: var(--anf-muted);
+        line-height: 1.2;
+      }
+      #anf-extension-tracking-panel .anf-metric-value {
+        font-size: 15px;
+        font-weight: 700;
+        color: var(--anf-bleu);
+        margin-top: 2px;
+      }
+      #anf-extension-tracking-panel .anf-metric-sub {
+        font-size: 10px;
+        color: var(--anf-muted);
+        margin-top: 1px;
+      }
+      #anf-extension-tracking-panel .anf-metrics-note {
+        margin: 0 0 8px;
+        font-size: 10px;
+        font-style: italic;
+        color: var(--anf-muted);
+        line-height: 1.35;
+      }
+      #anf-extension-tracking-panel .anf-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin: 2px 0 8px;
+      }
+      #anf-extension-tracking-panel .anf-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        background: #fff;
+        border: 1px solid #e3e3ef;
+        font-size: 10px;
+        font-weight: 600;
+        color: var(--anf-ink);
+      }
+      #anf-extension-tracking-panel .anf-chip-label {
+        color: var(--anf-muted);
+        font-weight: 400;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        font-size: 9px;
+      }
+      #anf-extension-tracking-panel .anf-nextstep {
+        display: grid;
+        grid-template-columns: 2fr 1fr;
+        gap: 8px;
+        margin: 0 0 8px;
+      }
+      @media (max-width: 640px) {
+        #anf-extension-tracking-panel .anf-nextstep {
+          grid-template-columns: 1fr;
+        }
+      }
+      #anf-extension-tracking-panel .anf-nextstep-now,
+      #anf-extension-tracking-panel .anf-nextstep-next {
+        background: #fff;
+        border: 1px solid #e3e3ef;
+        border-radius: 8px;
+        padding: 10px 12px;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-now {
+        border-left: 4px solid var(--anf-bleu);
+      }
+      #anf-extension-tracking-panel .anf-nextstep-next {
+        border-left: 4px solid #c4c4dd;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-tag {
+        display: inline-block;
+        font-size: 9px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--anf-bleu);
+        background: #eef0ff;
+        border-radius: 999px;
+        padding: 2px 8px;
+        margin-bottom: 4px;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-tag.is-next {
+        color: var(--anf-muted);
+        background: #f1f1f6;
+      }
+      #anf-extension-tracking-panel .anf-nextstep-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--anf-ink);
+      }
+      #anf-extension-tracking-panel .anf-nextstep-text {
+        margin: 4px 0 0;
+        font-size: 11px;
+        line-height: 1.4;
+        color: #444;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item {
+        transition: background 0.15s ease;
+        border-radius: 0 6px 6px 0;
+      }
+      #anf-extension-tracking-panel .anf-suivi-item:hover {
+        background: rgba(0, 0, 145, 0.04);
+      }
+      #anf-extension-tracking-panel .anf-metric {
+        transition: box-shadow 0.15s ease, transform 0.15s ease;
+      }
+      #anf-extension-tracking-panel .anf-metric:hover {
+        box-shadow: 0 3px 12px rgba(0, 0, 145, 0.08);
+        transform: translateY(-1px);
+      }
+    `;
+    document.head.appendChild(styleEl);
+  }
+
+  function renderTrackingPanel(apiInfos) {
+    try {
+      const root = document.getElementById("anf-extension-stepper-root");
+      if (!root || !hasNaturalisationData(apiInfos)) return;
+
+      const history = recordStatusHistory(apiInfos);
+      injectTrackingPanelCss();
+
+      let panel = document.getElementById("anf-extension-tracking-panel");
+      if (!panel) {
+        panel = document.createElement("section");
+        panel.id = "anf-extension-tracking-panel";
+        root.insertAdjacentElement("afterend", panel);
+      }
+
+      const collapsed = panel.getAttribute("data-collapsed") === "true";
+      panel.setAttribute("data-collapsed", collapsed ? "true" : "false");
+
+      const alert = getStatusAlert(apiInfos.statutCode);
+      let alertHtml = "";
+      if (alert) {
+        alertHtml = `
+          <div class="anf-alert is-${alert.level}" role="${
+          alert.level === "info" || alert.level === "success" ? "status" : "alert"
+        }">
+            <div class="anf-alert-title">${escapeHtml(alert.title)}</div>
+            <div class="anf-alert-msg">${escapeHtml(alert.message)}</div>
+          </div>`;
+      }
+
+      let itemsHtml = "";
+      if (history.length <= 1) {
+        itemsHtml = `<p class="anf-suivi-empty">L'historique se construit automatiquement : chaque nouveau statut détecté lors de vos visites sera enregistré ici.</p>`;
+      } else {
+        itemsHtml = '<ul class="anf-suivi-timeline">';
+        history.forEach((entry, index) => {
+          const isLatest = index === history.length - 1;
+          const when = entry.dateStatut
+            ? formatDate(entry.dateStatut)
+            : formatDate(entry.recordedAt);
+          const prev = index > 0 ? history[index - 1] : null;
+          let gapHtml = "";
+          if (prev) {
+            const from = parseAnchorDate(prev.dateStatut || prev.recordedAt);
+            const to = parseAnchorDate(entry.dateStatut || entry.recordedAt);
+            const gap = formatDurationBetween(from, to);
+            if (gap) gapHtml = `<div class="anf-suivi-gap">+ ${gap} depuis l'étape précédente</div>`;
+          }
+          const label = escapeHtml(entry.statutDescription || entry.statutCode);
+          itemsHtml += `
+            <li class="anf-suivi-item${isLatest ? " is-latest" : ""}">
+              <div class="anf-suivi-when">${escapeHtml(when)}</div>
+              <div class="anf-suivi-label">${label}</div>
+              ${gapHtml}
+            </li>`;
+        });
+        itemsHtml += "</ul>";
+      }
+
+      const hasFutureEntretien = (() => {
+        const d = new Date(apiInfos.assimilationDate || "");
+        return !isNaN(d.getTime()) && d.getTime() > Date.now();
+      })();
+
+      panel.innerHTML = `
+        ${alertHtml}
+        <div class="anf-suivi-head">
+          <h3 class="anf-suivi-title">Suivi &amp; historique</h3>
+          <div class="anf-suivi-actions">
+            <button type="button" class="anf-suivi-btn" data-action="copy">Copier le résumé</button>
+            <button type="button" class="anf-suivi-btn" data-action="export">Exporter JSON</button>
+            ${hasFutureEntretien ? '<button type="button" class="anf-suivi-btn" data-action="ics">Entretien → calendrier</button>' : ""}
+            <button type="button" class="anf-suivi-btn" data-action="toggle">${collapsed ? "Afficher" : "Masquer"}</button>
+          </div>
+        </div>
+        <div class="anf-suivi-body">
+          ${buildInfoChipsHtml(apiInfos)}
+          ${buildNextStepHtml(apiInfos)}
+          ${buildMetricsHtml(apiInfos)}
+          ${itemsHtml}
+        </div>
+      `;
+
+      const copyBtn = panel.querySelector('[data-action="copy"]');
+      if (copyBtn) {
+        copyBtn.addEventListener("click", async () => {
+          const summary = buildDossierSummaryText(apiInfos, history);
+          const ok = await copyTextToClipboard(summary);
+          const previous = copyBtn.textContent;
+          copyBtn.textContent = ok ? "Copié ✓" : "Échec de la copie";
+          setTimeout(() => {
+            copyBtn.textContent = previous;
+          }, 1800);
+        });
+      }
+
+      const exportBtn = panel.querySelector('[data-action="export"]');
+      if (exportBtn) {
+        exportBtn.addEventListener("click", () => {
+          const ok = exportHistoryJson(apiInfos, history);
+          const previous = exportBtn.textContent;
+          exportBtn.textContent = ok ? "Exporté ✓" : "Échec de l'export";
+          setTimeout(() => {
+            exportBtn.textContent = previous;
+          }, 1800);
+        });
+      }
+
+      const icsBtn = panel.querySelector('[data-action="ics"]');
+      if (icsBtn) {
+        icsBtn.addEventListener("click", () => {
+          const ok = exportEntretienIcs(apiInfos);
+          const previous = icsBtn.textContent;
+          icsBtn.textContent = ok ? "Téléchargé ✓" : "Échec";
+          setTimeout(() => {
+            icsBtn.textContent = previous;
+          }, 1800);
+        });
+      }
+
+      const toggleBtn = panel.querySelector('[data-action="toggle"]');
+      if (toggleBtn) {
+        toggleBtn.addEventListener("click", () => {
+          const isCollapsed = panel.getAttribute("data-collapsed") === "true";
+          panel.setAttribute("data-collapsed", isCollapsed ? "false" : "true");
+          toggleBtn.textContent = isCollapsed ? "Masquer" : "Afficher";
+        });
+      }
+    } catch (error) {
+      console.log(
+        "Warning: Extension API Naturalisation — panneau de suivi ignoré:",
+        error
+      );
+    }
+  }
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
+  }
+
   function waitForAnefHeader(timeoutMs = 5000) {
     return new Promise((resolve) => {
       if (document.querySelector("anef-header")) {
@@ -1932,10 +2854,13 @@
 
       showStepperIfReady(apiInfos, true);
 
+      renderTrackingPanel(apiInfos);
+
       enrichApiInfos(apiInfos)
         .then((enriched) => {
           logApiInfos(enriched);
           showStepperIfReady(enriched, true);
+          renderTrackingPanel(enriched);
           addSeriesVisibilityToggle();
           addFiscalStampVisibilityToggle();
         })
@@ -1945,6 +2870,7 @@
             error
           );
           logApiInfos(apiInfos);
+          renderTrackingPanel(apiInfos);
         });
     } catch (error) {
       console.log(
